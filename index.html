@@ -5013,10 +5013,12 @@ async function sbFetch(path, method='GET', body=null, prefer='return=representat
 
   const headers = {
     'apikey': SB_KEY,
-    'Authorization': 'Bearer ' + SB_KEY,
     'Content-Type': 'application/json',
     'Prefer': prefer,
   };
+  // Supabase 新版 sb_publishable_* 不是 JWT，不能放进 Bearer；
+  // 旧版 eyJ... anon key 才兼容 Authorization 头。
+  if (SB_KEY.startsWith('eyJ')) headers.Authorization = 'Bearer ' + SB_KEY;
   const opts = { method, headers, mode: 'cors', credentials: 'omit' };
   if (body) opts.body = JSON.stringify(body);
   try {
@@ -5110,7 +5112,9 @@ async function testDBConnection() {
       method: 'GET',
       mode: 'cors',
       credentials: 'omit',
-      headers: { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+      headers: SB_KEY.startsWith('eyJ')
+        ? { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY }
+        : { 'apikey': SB_KEY }
     });
     return r.ok;
   } catch(e) {
@@ -6542,7 +6546,8 @@ async function applyAddonImport(btn) {
     const res = await fetch(`${SB_URL}/rest/v1/rpc/at_apply_session`, {
       method: 'POST', mode: 'cors', credentials: 'omit',
       headers: {
-        apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY,
+        apikey: SB_KEY,
+        ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}),
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
