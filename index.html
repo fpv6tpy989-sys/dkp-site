@@ -4958,7 +4958,7 @@ function SK(key) { return AT_ENV === 'prod' ? key : ('dev:' + key); }
 const AT_ENVS = {
   prod: {
     SB_URL: 'https://ifpztiehnpgfdxabrbpm.supabase.co',
-    SB_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5hemRqcmVubGdveW9seWd4YmlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5NDQzMDksImV4cCI6MjA5MDUyMDMwOX0.iMScj50UhBZlvf3nROJ9ocR4_n7VmkbtoWXXyAtVuns',
+    SB_KEY: 'sb_publishable_kNNkg5rAkNiKwS95oeh3nA_ziBDwR3U',
     RELAY:  'https://at-dkp-relay.nzwow.workers.dev',
     // 生产的匿名写入已在 RLS 层彻底封锁；所有写操作只能经认证中转。
     WRITE_VIA_RELAY: true,
@@ -4966,7 +4966,7 @@ const AT_ENVS = {
   dev: {
     SB_URL: 'https://rgvynzbfzorlqbftnoyf.supabase.co',
     // Supabase 新版可发布密钥（取代旧的 anon JWT）。可公开，仅具只读能力。
-    SB_KEY: 'sb_publishable_kNNkg5rAkNiKwS95oeh3nA_ziBDwR3U',
+    SB_KEY: 'sb_publishable_7Rcz0m92xp69jCFTEoj1ug_svle-u0Q',
     RELAY:  'http://127.0.0.1:8787',             // npx wrangler dev --env dev
     // 已启用：读直连 DEV，写全部经中转（需 wrangler dev 在跑）
     WRITE_VIA_RELAY: true,
