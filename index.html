@@ -1511,6 +1511,7 @@ body.at-bg-on.at-login #mob-nav { visibility: hidden; }
       <div style="flex:1"></div>
       <button class="btn btn-gold btn-sm" onclick="buildAddonSnapshot()">生成数据串</button>
       <button class="btn btn-outline btn-sm" onclick="copyAddonSnapshot()">复制</button>
+      <button class="btn btn-outline btn-sm" onclick="downloadAddonOutboundBackup()">下载余额备份</button>
     </div>
     <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:10px">
       把下面的字符串复制，在游戏里输入 <code style="color:var(--gold)">/atdkp import</code> 粘贴进去。
@@ -4911,6 +4912,7 @@ const ATD = (function(){
   // 段字段定义 —— 必须与 addon/ATDKP/Snapshot.lua 的 FIELDS 一致
   const FIELDS={
     M:['id','bn','char_name','realm','char_key','cls','role','status','dkp','account_id'],
+    MB:['id','char_name','realm','dkp'],
     A:['id','bn','wx'],
     GT:['id','name','price_normal','price_hero','price_epic'],
     GI:['id','name','slot','boss','raid','price_normal','price_hero','price_epic','item_id'],
@@ -4939,7 +4941,7 @@ const AT_PROD_HOSTS = [
   //    而且顶着红色横幅。上线前必须填对。
   //    只认 hostname，不含路径：github.io/用户名/仓库名 也只填域名部分。
   'fpv6tpy989-sys.github.io',  // 新 GitHub Pages 正式入口（仓库路径不写在这里）
-  'wowatnz.servegame.com',
+  'wowatnz.servegame.com',     // No-IP 自定义正式入口
   // 'at-dkp.pages.dev',       // 以后挪到 Cloudflare Pages 再加
 ];
 // 同域名下用路径区分时（GitHub Pages 只能一个站点），dev 版放在 /dev/ 子路径
@@ -4955,7 +4957,7 @@ function SK(key) { return AT_ENV === 'prod' ? key : ('dev:' + key); }
 
 const AT_ENVS = {
   prod: {
-    SB_URL: 'https://nazdjrenlgoyolygxbij.supabase.co',
+    SB_URL: 'https://ifpztiehnpgfdxabrbpm.supabase.co',
     SB_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5hemRqcmVubGdveW9seWd4YmlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5NDQzMDksImV4cCI6MjA5MDUyMDMwOX0.iMScj50UhBZlvf3nROJ9ocR4_n7VmkbtoWXXyAtVuns',
     RELAY:  'https://at-dkp-relay.nzwow.workers.dev',
     // 生产的匿名写入已在 RLS 层彻底封锁；所有写操作只能经认证中转。
@@ -4964,7 +4966,7 @@ const AT_ENVS = {
   dev: {
     SB_URL: 'https://rgvynzbfzorlqbftnoyf.supabase.co',
     // Supabase 新版可发布密钥（取代旧的 anon JWT）。可公开，仅具只读能力。
-    SB_KEY: 'sb_publishable_7Rcz0m92xp69jCFTEoj1ug_svle-u0Q',
+    SB_KEY: 'sb_publishable_kNNkg5rAkNiKwS95oeh3nA_ziBDwR3U',
     RELAY:  'http://127.0.0.1:8787',             // npx wrangler dev --env dev
     // 已启用：读直连 DEV，写全部经中转（需 wrangler dev 在跑）
     WRITE_VIA_RELAY: true,
@@ -6071,6 +6073,7 @@ async function eaDelete(id) {
 // 游戏插件数据交换
 // ════════════════════════════════════════════════════════
 let addonSnapshotStr = '';
+let addonOutboundBackup = null;
 
 function renderAddonPage() {
   const badge = document.getElementById('addon-env-badge');
@@ -6123,11 +6126,25 @@ async function buildAddonSnapshot() {
     const pick = (rows, fields) => (rows || []).map(r => fields.map(f => r[f] ?? ''));
     addonSnapshotStr = ATD.encode(AT_ENV, [
       { tag:'M',  fields: ATD.FIELDS.M,  rows: pick(ms,   ATD.FIELDS.M)  },
+      // MB 保存全部角色余额（包括请假/离队），只用于灾难恢复；插件实际
+      // 名单仍只读取上面的 M 段，不会把非在队成员塞进名单。
+      { tag:'MB', fields: ATD.FIELDS.MB, rows: pick(allMs, ATD.FIELDS.MB) },
       { tag:'A',  fields: ATD.FIELDS.A,  rows: pick(accs, ATD.FIELDS.A)  },
       { tag:'GT', fields: ATD.FIELDS.GT, rows: pick(gts,  ATD.FIELDS.GT) },
       { tag:'GI', fields: ATD.FIELDS.GI, rows: pick(gis,  ATD.FIELDS.GI) },
       { tag:'EL', fields: ATD.FIELDS.EL, rows: pick(evs,  ATD.FIELDS.EL) },
     ]);
+
+    addonOutboundBackup = {
+      format: 'ATDKP_WEB_SNAPSHOT_V1',
+      generated_at: new Date().toISOString(),
+      env: AT_ENV,
+      members: allMs.map(m => ({
+        id: m.id, char_name: m.char_name || '', realm: m.realm || '',
+        status: m.status || '', dkp: Number(m.dkp) || 0,
+      })),
+      data_string: addonSnapshotStr,
+    };
 
     box.value = addonSnapshotStr;
     const kb = (addonSnapshotStr.length / 1024).toFixed(1);
@@ -6143,7 +6160,8 @@ async function buildAddonSnapshot() {
         '若你刚在网页上建了活动却没出现在这里，检查它是不是被标成了「已完成」。</span>';
 
     info.innerHTML =
-      `已生成：<b style="color:var(--gold)">${ms.length}</b> 个角色 · ` +
+      `已生成：<b style="color:var(--gold)">${ms.length}</b> 个在队角色 · ` +
+      `<b style="color:var(--gold)">${allMs.length}</b> 人完整余额备份 · ` +
       `<b style="color:var(--gold)">${(accs||[]).length}</b> 个账号 · ` +
       `<b style="color:var(--gold)">${(gts||[]).length}</b> 类装备价 · ` +
       `<b style="color:var(--gold)">${(gis||[]).length}</b> 件掉落 · ` +
@@ -6158,6 +6176,19 @@ async function buildAddonSnapshot() {
     console.error(e);
     info.innerHTML = `<span style="color:#e84040">生成失败：${e.message}</span>`;
   }
+}
+
+function downloadAddonOutboundBackup() {
+  if (!addonOutboundBackup) { toast('请先点「生成数据串」', 'err'); return; }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const blob = new Blob([JSON.stringify(addonOutboundBackup, null, 2)],
+                        {type:'application/json;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ATDKP-网页余额快照-${stamp}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('网页余额快照已下载', 'ok');
 }
 
 function copyAddonSnapshot() {
@@ -6182,6 +6213,11 @@ function copyAddonSnapshot() {
 let addonParsed = null;
 // 用户在预览页选择的目标活动：null = 新建，数字 = 关联到该活动
 let addonTargetEvent = null;
+// 插件虽然带了 event_id，但网页确认该活动已经不存在。此时必须明确清空，
+// 不能在提交 payload 时又从原始 EV 行把这个失效 id 填回去。
+let addonOriginalEventMissing = false;
+// 最近一次成功导入返回的独立恢复包。只放内存，不把完整 JSON 塞进 HTML 属性。
+let addonRecoveryBundle = null;
 
 const KIND_LABEL = { checkin:'集合签到', boss:'Boss击杀', wipe:'灭团', loot:'装备掉落',
                      hourly:'每小时加分', end:'活动结束', manual:'手动调整', note:'备注' };
@@ -6197,6 +6233,7 @@ async function previewAddonImport() {
   const str = (document.getElementById('addon-import-box').value || '').trim();
   addonParsed = null;
   addonTargetEvent = null;
+  addonOriginalEventMissing = false;
   if (!str) { out.innerHTML = '<span style="color:var(--muted)">请先粘贴数据串</span>'; return; }
 
   let data;
@@ -6216,7 +6253,8 @@ async function previewAddonImport() {
   }
 
   const rs = rows('RS'), tl = rows('TL'), lt = rows('LT'), nm = rows('NM');
-  addonParsed = { data, ev, rs, tl, lt, nm };
+  const bm = rows('BM'), bs = rows('BS'), be = rows('BE');
+  addonParsed = { data, ev, rs, tl, lt, nm, bm, bs, be };
 
   // ── 名单匹配：插件用 member_id，这里核对这些 id 在库里是否存在 ──
   const known = new Set(members.map(m => String(m.db_id ?? m.id)));
@@ -6283,6 +6321,27 @@ async function previewAddonImport() {
   }
   html += `</div>`;
 
+  // 余额快照：新插件才有。它是恢复与核对信息，不作为数据库记账指令。
+  if (bm.length && bs.length) {
+    const meta = bm[0];
+    const mismatches = bs.filter(r => {
+      const m = members.find(x => String(x.db_id ?? x.id) === String(r.member_id));
+      return m && Number(m.dkp) !== Number(r.dkp);
+    });
+    html += `<div style="margin-bottom:8px;padding:10px 12px;border-radius:8px;background:rgba(80,200,120,.06);border:1px solid rgba(80,200,120,.22)">
+      <b style="color:#50c878">✓ 含 DKP 余额快照</b>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">
+        建团基线 ${esc(bs.length)} 人 · 快照时间 ${fmtTime(meta.snapshot_ts)} ·
+        预计结束余额 ${esc(be.length)} 人。数据库仍按本场增量记账，不会用预计值覆盖当前余额。
+      </div>
+      ${mismatches.length ? `<div style="font-size:11px;color:#f0b41f;margin-top:4px">
+        当前网页已有 ${mismatches.length} 人与建团基线不同；这是允许的，导入后恢复包会同时保存数据库实际前后余额。</div>` : ''}
+    </div>`;
+  } else {
+    html += `<div style="margin-bottom:8px;font-size:11px;color:#f0b41f">
+      ⚠ 这是旧版活动字符串，不含 DKP 余额快照；仍可正常导入，但无法生成完整的插件侧余额核对。</div>`;
+  }
+
   // 新团员：逐个勾选
   if (nm.length) {
     html += `<div style="margin-bottom:8px;padding:10px 12px;border-radius:8px;background:rgba(240,180,31,.06);border:1px solid rgba(240,180,31,.2)">
@@ -6316,7 +6375,7 @@ async function previewAddonImport() {
   html += simulatedHint;
 
   html += `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-    <button class="btn btn-gold btn-sm" id="addon-apply-btn" onclick="applyAddonImport(this)">✓ 确认写入数据库</button>
+    <button class="btn btn-gold btn-sm" id="addon-apply-btn" onclick="applyAddonImport(this)" disabled>检查关联活动…</button>
     <span style="font-size:11px;color:var(--muted)">
       整场记录在<b>单个事务</b>里写入 —— 要么全成，要么全部回滚，不会留下写了一半的状态。<br>
       同一场团重复导入会被幂等键拦下，不会重复加分。
@@ -6325,8 +6384,14 @@ async function previewAddonImport() {
 
   out.innerHTML = html;
 
-  // 目标活动选择要等 DOM 就位，异步查库后再填
-  renderAddonTargetChoice(ev, started);
+  // 目标活动选择要等 DOM 就位，异步查库后再填。检查完成前不允许提交，
+  // 否则慢网络下可能在“活动是否还存在”尚未确定时写入旧 event_id。
+  try {
+    await renderAddonTargetChoice(ev, started);
+  } finally {
+    const applyBtn = document.getElementById('addon-apply-btn');
+    if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '✓ 确认写入数据库'; }
+  }
 }
 
 /** 检测同日已有活动，让用户选择「新建」还是「关联到已有」。
@@ -6364,11 +6429,13 @@ async function renderAddonTargetChoice(ev, started) {
     } catch (e) { alive = true; }   // 查不动就当它在，别因为网络问题拦住导入
 
     if (alive) {
+      addonOriginalEventMissing = false;
       addonTargetEvent = Number(ev.event_id);
       box.innerHTML = `<span style="font-size:11px;color:#50c878">
         将写入已关联的活动 #${esc(ev.event_id)}（在插件里建活动时选定的）</span>`;
       return;
     }
+    addonOriginalEventMissing = true;
     // 活动已经不在了 —— 说明白，然后往下走正常的选择流程
     box.dataset.gone = String(ev.event_id);
   }
@@ -6431,7 +6498,7 @@ function updateAddonTargetWarn() {
 /** 把解析好的会话写进数据库。经中转 API 调数据库函数，整场单事务。 */
 async function applyAddonImport(btn) {
   if (!addonParsed) { toast('请先解析预览', 'err'); return; }
-  const { ev, rs, tl, lt, nm } = addonParsed;
+  const { ev, rs, tl, lt, nm, bm, bs, be } = addonParsed;
 
   const sessionId = ev.session_id || '';
   if (!sessionId) {
@@ -6497,9 +6564,26 @@ async function applyAddonImport(btn) {
     idempotency_key: sessionId,
     env: AT_ENV,
     source: 'addon',
+    balance_meta: bm[0] ? {
+      session_id: bm[0].session_id,
+      snapshot_ts: Number(bm[0].snapshot_ts) || 0,
+      captured_at: Number(bm[0].captured_at) || 0,
+      member_count: Number(bm[0].member_count) || bs.length,
+    } : null,
+    balance_base: bs.map(r => ({
+      member_id: Number(r.member_id), char_name: r.char_name, realm: r.realm,
+      dkp: Number(r.dkp) || 0,
+    })),
+    balance_expected: be.map(r => ({
+      member_id: Number(r.member_id), char_name: r.char_name,
+      base_dkp: Number(r.base_dkp) || 0, delta: Number(r.delta) || 0,
+      expected_dkp: Number(r.expected_dkp) || 0,
+    })),
     event: {
       // 优先用预览页选的目标；插件里已关联过的会在那一步就锁定
-      event_id: addonTargetEvent || ev.event_id || null,
+      event_id: addonTargetEvent !== null
+        ? addonTargetEvent
+        : (addonOriginalEventMissing ? null : (ev.event_id || null)),
       name: ev.name, raid: ev.raid,
       difficulty_id: ev.difficulty_id, difficulty_name: ev.difficulty_name,
       started_at: ev.started_at, ended_at: ev.ended_at || null,
@@ -6520,6 +6604,7 @@ async function applyAddonImport(btn) {
     // 写进 events.roster，和网页自己建活动时的编码一致（db.insertEvent）。
     // 不传的话插件导入的活动在网页上全是主力，团长得一个个点回替补。
     roster: rs.map(r => ({ member_id: r.member_id, char_name: r.char_name,
+                           realm: r.realm || '',
                            minutes: r.minutes, is_sub: r.is_sub === '1' })),
   };
 
@@ -6547,12 +6632,16 @@ async function applyAddonImport(btn) {
     }
 
     const r = j.result || {};
+    addonRecoveryBundle = j.backup || null;
+    const backupButton = addonRecoveryBundle
+      ? `<button class="btn btn-gold btn-sm" onclick="downloadAddonRecoveryBundle()">⬇ 下载本场恢复包 JSON</button>`
+      : `<span style="font-size:11px;color:var(--muted)">本次没有数据库恢复包（旧接口或旧导入记录）</span>`;
     if (j.status === 'already_applied') {
       out.innerHTML = `<div style="color:#f0b41f">⚠ 这场团已经导入过了，未重复写入</div>
         <div style="font-size:12px;color:var(--muted);margin-top:6px">
           上次写入：活动 #${esc(r.event_id)}「${esc(r.event_name)}」·
           ${esc(r.dkp_entries)} 条加分 · ${esc(r.loot_entries)} 件装备
-        </div>`;
+        </div><div style="margin-top:10px">${backupButton}</div>`;
     } else {
       out.innerHTML = `<div style="color:#50c878;font-size:14px">✓ 写入成功</div>
         <div style="font-size:12px;margin-top:8px;line-height:1.9">
@@ -6561,7 +6650,8 @@ async function applyAddonImport(btn) {
           ${r.new_members_created ? `新建团员 ${esc(r.new_members_created)} 人<br>` : ''}
           ${r.new_members_skipped ? `<span style="color:var(--muted)">跳过 ${esc(r.new_members_skipped)} 人：${esc((r.skipped_names||[]).join('、'))}</span><br>` : ''}
         </div>
-        <div style="margin-top:10px"><button class="btn btn-outline btn-sm" onclick="location.reload()">刷新页面查看结果</button></div>`;
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">${backupButton}
+          <button class="btn btn-outline btn-sm" onclick="location.reload()">刷新页面查看结果</button></div>`;
       toast('导入成功', 'ok');
     }
   } catch (e) {
@@ -6569,6 +6659,21 @@ async function applyAddonImport(btn) {
   } finally {
     btn.disabled = false; btn.textContent = old;
   }
+}
+
+function downloadAddonRecoveryBundle() {
+  if (!addonRecoveryBundle) { toast('当前没有可下载的恢复包', 'err'); return; }
+  const eventName = addonRecoveryBundle.event?.name || addonRecoveryBundle.event_name || '活动';
+  const safe = String(eventName).replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 48) || '活动';
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const blob = new Blob([JSON.stringify(addonRecoveryBundle, null, 2)],
+                        {type:'application/json;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ATDKP-恢复包-${safe}-${stamp}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('恢复包已下载，请另存一份', 'ok');
 }
 
 function exportCSV(type) {
@@ -7323,25 +7428,26 @@ async function newsUpload(file) {
   if (file.size > NEWS_MAX_MB * 1024 * 1024) {
     throw new Error(`图片超过 ${NEWS_MAX_MB} MB，先压一下再传`);
   }
-  const ext  = (String(file.name).match(/\.[a-z0-9]+$/i) || ['.png'])[0].toLowerCase();
-  const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-  const res  = await fetch(`${SB_URL}/storage/v1/object/news/${path}`, {
+  const token = atGetToken();
+  if (!token) throw new Error('管理员登录已失效，请重新登录后上传');
+  const res  = await fetch(`${RELAY_URL}/storage/news`, {
     method: 'POST',
     headers: {
-      apikey: SB_KEY,
-      Authorization: 'Bearer ' + SB_KEY,
+      'X-AT-Token': token,
       'Content-Type': file.type || 'application/octet-stream',
     },
     body: file,
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
-    // 桶不存在或没建策略是最常见的两种失败，直接说清楚该去哪修
+    // 桶不存在或中转尚未更新是最常见的两种失败，直接保留服务端原因。
     throw new Error(`上传失败 ${res.status}：${txt.slice(0, 160)}` +
       (res.status === 400 || res.status === 404
         ? '（多半是 news 桶还没建，去 Supabase 跑 migrations/008）' : ''));
   }
-  return `${SB_URL}/storage/v1/object/public/news/${path}`;
+  const out = await res.json();
+  if (!out.url) throw new Error('上传成功但中转没有返回图片地址');
+  return out.url;
 }
 
 async function newsPickImages(input) {
